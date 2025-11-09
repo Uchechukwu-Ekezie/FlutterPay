@@ -4,6 +4,17 @@ export default {
     content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
   	extend: {
+  		fontFamily: {
+  			sans: ["DM Sans", "ui-sans-serif", "system-ui", "-apple-system"],
+  		},
+  		container: {
+  			center: true,
+  			padding: "1rem",
+  			screens: {
+  				lg: "1120px",
+  				xl: "1120px",
+  			},
+  		},
   		borderRadius: {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',

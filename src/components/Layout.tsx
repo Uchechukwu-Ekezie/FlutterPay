@@ -1,9 +1,10 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Wallet, Menu, X } from "lucide-react";
-import { useWallet } from "../hooks/useWallet";
+import { Menu, X } from "lucide-react";
 import { useState } from "react";
-import { PushUniversalAccountButton } from "@pushchain/ui-kit";
+import { Footer } from "./Footer";
+import { FeatherIcon } from "./ui/FeatherIcon";
+import WalletButton from "./WalletButton";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -18,36 +19,37 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     { name: "My Subscriptions", href: "/subscriptions" },
     { name: "Wallet", href: "/wallet" },
     { name: "Provider Dashboard", href: "/provider" },
-    { name: "Test Page", href: "/test" },
   ];
 
   const isActive = (path: string) => location.pathname === path;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
+      <header className="bg-background/80 backdrop-blur-md border-b border-border sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
-            <Link to="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">S</span>
+            <Link to="/" className="flex items-center space-x-2 group">
+              <div className="w-9 h-9 bg-primary rounded-xl flex items-center justify-center transform group-hover:scale-105 transition-transform shadow-md">
+                <FeatherIcon className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xl font-bold text-gray-900">StreamPay</span>
+              <span className="text-xl font-bold text-primary">
+                FlutterPay
+              </span>
             </Link>
 
             {/* Desktop Navigation */}
-            <nav className="hidden md:flex space-x-8">
+            <nav className="hidden md:flex space-x-1">
               {navigation.map((item) => (
                 <Link
                   key={item.name}
                   to={item.href}
                   className={`${
                     isActive(item.href)
-                      ? "text-blue-600 border-b-2 border-blue-600"
-                      : "text-gray-500 hover:text-gray-900"
-                  } px-3 py-2 text-sm font-medium transition-colors`}
+                      ? "text-primary bg-primary/10"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  } px-4 py-2 text-sm font-medium transition-all rounded-lg`}
                 >
                   {item.name}
                 </Link>
@@ -55,15 +57,27 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
             </nav>
 
             {/* Wallet Connection */}
-            <div className="p-4 border-b">
-            <PushUniversalAccountButton />
-          </div>
+            <div className="flex items-center space-x-4">
+              <WalletButton />
+
+              {/* Mobile menu button */}
+              <button
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                {isMobileMenuOpen ? (
+                  <X className="w-5 h-5" />
+                ) : (
+                  <Menu className="w-5 h-5" />
+                )}
+              </button>
             </div>
+          </div>
 
           {/* Mobile Navigation */}
           {isMobileMenuOpen && (
-            <div className="md:hidden border-t border-gray-200 py-4">
-              <div className="space-y-2">
+            <div className="md:hidden border-t border-gray-200 py-4 animate-in slide-in-from-top">
+              <div className="space-y-1">
                 {navigation.map((item) => (
                   <Link
                     key={item.name}
@@ -71,9 +85,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                     onClick={() => setIsMobileMenuOpen(false)}
                     className={`${
                       isActive(item.href)
-                        ? "text-blue-600 bg-blue-50"
-                        : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
-                    } block px-3 py-2 rounded-lg text-sm font-medium transition-colors`}
+                        ? "text-primary bg-primary/10"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    } block px-3 py-2.5 rounded-lg text-sm font-medium transition-colors`}
                   >
                     {item.name}
                   </Link>
@@ -85,7 +99,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </header>
 
       {/* Main Content */}
-      <main>{children}</main>
+      <main className="min-h-[calc(100vh-4rem)]">{children}</main>
+
+      {/* Footer */}
+      <Footer />
     </div>
   );
 };

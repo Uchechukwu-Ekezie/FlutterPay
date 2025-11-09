@@ -1,59 +1,27 @@
-import { useState, useEffect } from 'react';
-import toast from 'react-hot-toast';
-import { ethers } from 'ethers';
+import { useAccount, useDisconnect } from "wagmi";
+import { useAppKit } from "@reown/appkit/react";
 
-// Simplified wallet connection hook
-// In production, this would use Wagmi/RainbowKit
+// Modern wallet hook using wagmi and Reown AppKit
 export const useWallet = () => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [address, setAddress] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const { address, isConnected, isConnecting, isReconnecting, chain } =
+    useAccount();
+  const { disconnect } = useDisconnect();
+  const { open } = useAppKit();
 
-  // Check if wallet was previously connected
-  useEffect(() => {
-    const savedAddress = localStorage.getItem('walletAddress');
-    if (savedAddress) {
-      setIsConnected(true);
-      setAddress(savedAddress);
-    }
-  }, []);
-
-const connectWallet = async () => {
-  setIsConnecting(true);
-  try {
-    if (!window.ethereum) throw new Error("No wallet found");
-
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    await provider.send("eth_requestAccounts", []);
-    const signer = await provider.getSigner();
-    const walletAddress = await signer.getAddress();
-
-    setAddress(walletAddress);
-    setIsConnected(true);
-    localStorage.setItem("walletAddress", walletAddress);
-
-    toast.success("Wallet connected successfully!");
-  } catch (error) {
-    console.error(error);
-    toast.error("Failed to connect wallet");
-  } finally {
-    setIsConnecting(false);
-  }
-};
-
+  const connectWallet = async () => {
+    await open();
+  };
 
   const disconnectWallet = () => {
-    setAddress(null);
-    setIsConnected(false);
-    localStorage.removeItem('walletAddress');
-    toast.success('Wallet disconnected');
+    disconnect();
   };
 
   return {
     isConnected,
-    address,
-    isConnecting,
+    address: address || null,
+    isConnecting: isConnecting || isReconnecting,
     connectWallet,
     disconnectWallet,
+    chain,
   };
 };

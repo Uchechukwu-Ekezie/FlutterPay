@@ -11,7 +11,7 @@ export const Card: React.FC<CardProps> = ({ children, className, hover = false }
   return (
     <div
       className={clsx(
-        'bg-white rounded-xl border border-gray-200 shadow-sm',
+        'bg-card text-card-foreground rounded-lg border border-border shadow-sm',
         hover && 'hover:shadow-md transition-shadow',
         className
       )}

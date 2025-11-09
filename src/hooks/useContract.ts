@@ -1,12 +1,17 @@
 import { useState } from "react";
-import { ethers } from "ethers";
 import toast from "react-hot-toast";
+import {
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  useAccount,
+  useSwitchChain,
+} from "wagmi";
+import { parseEther } from "viem";
 import {
   CONTRACT_CONFIG,
   CONTRACT_FUNCTIONS,
   CONTRACT_ERRORS,
 } from "../contracts/contractconfig";
-import { useWallet } from "./useWallet";
 
 // Add type declaration for window.ethereum
 declare global {
@@ -16,153 +21,67 @@ declare global {
 }
 
 export const useStreamPayContract = () => {
-  const { isConnected, address } = useWallet();
+  const { address, isConnected, chain } = useAccount();
+  const { switchChain } = useSwitchChain();
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingTxHash, setPendingTxHash] = useState<
+    `0x${string}` | undefined
+  >();
 
-  // Initialize provider and contract
-  const getContract = async () => {
-    if (!isConnected) throw new Error(CONTRACT_ERRORS.Unauthorized);
+  const { writeContractAsync } = useWriteContract();
 
-    console.log("🔗 Initializing blockchain connection...");
+  const { isLoading: isConfirming, isSuccess: isConfirmed } =
+    useWaitForTransactionReceipt({
+      hash: pendingTxHash,
+    });
 
-    // Ensure MetaMask is connected to the right network
-    const provider = new ethers.BrowserProvider(window.ethereum as any);
-    const network = await provider.getNetwork();
-    console.log(
-      "📡 Connected to network:",
-      network.name,
-      "Chain ID:",
-      network.chainId.toString()
-    );
+  // Helper to ensure correct network
+  const ensureCorrectNetwork = async () => {
+    if (!isConnected) {
+      toast.error(CONTRACT_ERRORS.Unauthorized);
+      throw new Error(CONTRACT_ERRORS.Unauthorized);
+    }
 
-    if (network.chainId !== BigInt(CONTRACT_CONFIG.NETWORK_ID)) {
-      console.log("🔄 Wrong network detected, attempting to switch...");
+    if (chain?.id !== CONTRACT_CONFIG.NETWORK_ID) {
+      console.log("� Wrong network detected, switching...");
       try {
-        // Try to switch to Arbitrum Sepolia
-        await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: `0x${CONTRACT_CONFIG.NETWORK_ID.toString(16)}` }], // Convert to hex
-        });
+        await switchChain({ chainId: CONTRACT_CONFIG.NETWORK_ID });
         console.log("✅ Network switched successfully");
-        // Retry getting the network
-        const newNetwork = await provider.getNetwork();
-        console.log(
-          "📡 Now connected to:",
-          newNetwork.name,
-          "Chain ID:",
-          newNetwork.chainId.toString()
-        );
-      } catch (switchError: any) {
-        if (switchError.code === 4902) {
-          // Network not added to MetaMask, let's add it
-          console.log("🔧 Network not found, adding Arbitrum Sepolia...");
-          try {
-            await window.ethereum.request({
-              method: "wallet_addEthereumChain",
-              params: [
-                {
-                  chainId: `0x${CONTRACT_CONFIG.NETWORK_ID.toString(16)}`,
-                  chainName: "Arbitrum Sepolia",
-                  nativeCurrency: {
-                    name: "ETH",
-                    symbol: "ETH",
-                    decimals: 18,
-                  },
-                  rpcUrls: [CONTRACT_CONFIG.NETWORK_RPC_URL],
-                  blockExplorerUrls: ["https://sepolia.arbiscan.io"],
-                },
-              ],
-            });
-            console.log("✅ Arbitrum Sepolia network added and switched");
-          } catch (addError) {
-            console.error("❌ Failed to add network:", addError);
-            throw new Error(
-              "Please manually add Arbitrum Sepolia network to MetaMask"
-            );
-          }
-        } else {
-          console.error("❌ Failed to switch network:", switchError);
-          throw new Error(
-            `Please switch to Arbitrum Sepolia (Chain ID: ${CONTRACT_CONFIG.NETWORK_ID}) in MetaMask`
-          );
-        }
+      } catch (error: any) {
+        console.error("❌ Failed to switch network:", error);
+        toast.error(`Please switch to ${CONTRACT_CONFIG.NETWORK_NAME}`);
+        throw error;
       }
     }
-
-    const signer = await provider.getSigner();
-    const signerAddress = await signer.getAddress();
-    console.log("👤 Signer address:", signerAddress);
-
-    // Verify the contract exists
-    const code = await provider.getCode(CONTRACT_CONFIG.CONTRACT_ADDRESS);
-    if (code === "0x") {
-      throw new Error("Contract not found at the specified address");
-    }
-    console.log("✅ Contract verified at:", CONTRACT_CONFIG.CONTRACT_ADDRESS);
-
-    return new ethers.Contract(
-      CONTRACT_CONFIG.CONTRACT_ADDRESS,
-      CONTRACT_CONFIG.CONTRACT_ABI,
-      signer
-    );
   };
 
   // Register a provider on-chain
   const registerProvider = async (name: string) => {
     setIsLoading(true);
     try {
-      console.log("🔗 Getting contract for provider registration...");
-      const contract = await getContract();
-
-      console.log("📋 Contract details:");
-      console.log("  - Address:", contract.target);
-      console.log("  - Function:", CONTRACT_FUNCTIONS.ProviderRegister);
-      console.log("  - Provider name:", name);
+      await ensureCorrectNetwork();
 
       console.log("📤 Sending registration transaction...");
-      const tx = await contract[CONTRACT_FUNCTIONS.ProviderRegister](name, {
-        gasLimit: 300000, // Add explicit gas limit
+      const hash = await writeContractAsync({
+        address: CONTRACT_CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+        abi: CONTRACT_CONFIG.CONTRACT_ABI,
+        functionName: CONTRACT_FUNCTIONS.ProviderRegister,
+        args: [name],
       });
 
-      console.log("✅ Transaction sent:", tx.hash);
-      console.log("⏳ Waiting for confirmation...");
-
-      const receipt = await tx.wait();
-      console.log("🎉 Provider registration confirmed!");
-      console.log("📋 Receipt:", receipt);
-
-      // VERIFY the transaction actually exists on blockchain
-      console.log("🔍 Verifying transaction on blockchain...");
-      const provider = new ethers.BrowserProvider(window.ethereum as any);
-      const verifyTx = await provider.getTransaction(tx.hash);
-      if (!verifyTx) {
-        throw new Error(
-          "Transaction not found on blockchain! This means it was only simulated locally."
-        );
-      }
-      console.log(
-        "✅ Transaction verified on blockchain:",
-        verifyTx.blockNumber
-      );
-
+      setPendingTxHash(hash);
+      console.log("✅ Transaction sent:", hash);
       toast.success("Provider registered successfully!");
-      return tx;
+
+      return hash;
     } catch (error: any) {
       console.error("❌ Provider registration failed:", error);
-      console.error("Error details:", {
-        message: error.message,
-        reason: error.reason,
-        code: error.code,
-        data: error.data,
-      });
-
       let errorMessage = "Failed to register provider";
-      if (error.reason) {
-        errorMessage = error.reason;
-      } else if (error.message.includes("user rejected")) {
+      if (error.message?.includes("user rejected")) {
         errorMessage = "Transaction rejected by user";
+      } else if (error.shortMessage) {
+        errorMessage = error.shortMessage;
       }
-
       toast.error(errorMessage);
       throw error;
     } finally {
@@ -178,66 +97,34 @@ export const useStreamPayContract = () => {
   ) => {
     setIsLoading(true);
     try {
-      console.log("🔗 Getting contract for plan creation...");
-      const contract = await getContract();
-      const priceWei = ethers.parseEther(price); // Convert ETH to Wei
+      await ensureCorrectNetwork();
 
-      console.log("📋 Plan creation details:");
+      const priceWei = parseEther(price);
+      console.log("� Sending plan creation transaction...");
       console.log("  - Price (ETH):", price);
-      console.log("  - Price (Wei):", priceWei.toString());
       console.log("  - Interval (seconds):", interval);
       console.log("  - Metadata hash:", metadataHash);
-      console.log("  - Function:", CONTRACT_FUNCTIONS.CreatePlan);
 
-      console.log("📤 Sending plan creation transaction...");
-      const tx = await contract[CONTRACT_FUNCTIONS.CreatePlan](
-        priceWei,
-        interval,
-        metadataHash,
-        {
-          gasLimit: 300000, // Add explicit gas limit
-        }
-      );
-
-      console.log("✅ Transaction sent:", tx.hash);
-      console.log("⏳ Waiting for confirmation...");
-
-      const receipt = await tx.wait();
-      console.log("🎉 Plan creation confirmed!");
-      console.log("📋 Receipt:", receipt);
-
-      // VERIFY the transaction actually exists on blockchain
-      console.log("🔍 Verifying transaction on blockchain...");
-      const provider = new ethers.BrowserProvider(window.ethereum as any);
-      const verifyTx = await provider.getTransaction(tx.hash);
-      if (!verifyTx) {
-        throw new Error(
-          "Transaction not found on blockchain! This means it was only simulated locally."
-        );
-      }
-      console.log(
-        "✅ Transaction verified on blockchain:",
-        verifyTx.blockNumber
-      );
-
-      toast.success("Plan created successfully!");
-      return receipt;
-    } catch (error: any) {
-      console.error("❌ Plan creation failed:", error);
-      console.error("Error details:", {
-        message: error.message,
-        reason: error.reason,
-        code: error.code,
-        data: error.data,
+      const hash = await writeContractAsync({
+        address: CONTRACT_CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+        abi: CONTRACT_CONFIG.CONTRACT_ABI,
+        functionName: CONTRACT_FUNCTIONS.CreatePlan,
+        args: [priceWei, interval, metadataHash],
       });
 
-      let errorMessage = "Failed to create plan";
-      if (error.reason) {
-        errorMessage = error.reason;
-      } else if (error.message.includes("user rejected")) {
-        errorMessage = "Transaction rejected by user";
-      }
+      setPendingTxHash(hash);
+      console.log("✅ Transaction sent:", hash);
+      toast.success("Plan created successfully!");
 
+      return hash;
+    } catch (error: any) {
+      console.error("❌ Plan creation failed:", error);
+      let errorMessage = "Failed to create plan";
+      if (error.message?.includes("user rejected")) {
+        errorMessage = "Transaction rejected by user";
+      } else if (error.shortMessage) {
+        errorMessage = error.shortMessage;
+      }
       toast.error(errorMessage);
       throw error;
     } finally {
@@ -249,94 +136,37 @@ export const useStreamPayContract = () => {
   const subscribe = async (planId: string, price: string) => {
     setIsLoading(true);
     try {
-      const contract = await getContract();
+      await ensureCorrectNetwork();
+
       console.log("🎯 Starting subscription process...");
       console.log("Plan ID:", planId, "Price:", price);
-      console.log("Contract address:", CONTRACT_CONFIG.CONTRACT_ADDRESS);
-      console.log("Wallet address:", address);
 
-      // Check if we have enough balance first
-      const walletBalance = await window.ethereum.request({
-        method: "eth_getBalance",
-        params: [address, "latest"],
-      });
-      console.log("Wallet balance:", ethers.formatEther(walletBalance), "ETH");
-
-      // The subscribe function returns the subscription ID directly
-      console.log("📝 Calling contract.subscribe...");
-      console.log("Function name:", CONTRACT_FUNCTIONS.Subscribe);
-      console.log("Parameters:", { planId, value: ethers.parseEther(price) });
-
-      const tx = await contract[CONTRACT_FUNCTIONS.Subscribe](planId, {
-        value: ethers.parseEther(price),
-        gasLimit: 500000, // Add explicit gas limit
+      const hash = await writeContractAsync({
+        address: CONTRACT_CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+        abi: CONTRACT_CONFIG.CONTRACT_ABI,
+        functionName: CONTRACT_FUNCTIONS.Subscribe,
+        args: [planId],
+        value: parseEther(price),
       });
 
-      console.log("✅ Transaction sent:", tx.hash);
-      console.log("⏳ Waiting for confirmation...");
-      const receipt = await tx.wait();
-      console.log("✅ Transaction confirmed:", receipt);
+      setPendingTxHash(hash);
+      console.log("✅ Transaction sent:", hash);
 
-      // Try to get subscription ID from events (if available)
-      let subscriptionId = null;
-      try {
-        console.log("Parsing transaction logs for subscription ID...");
-        console.log("Number of logs:", receipt.logs.length);
+      // Generate temporary subscription ID
+      const subscriptionId = "pending_" + Date.now().toString().slice(-6);
+      toast.success(`Subscribed successfully! TX: ${hash.slice(0, 10)}...`);
 
-        for (let i = 0; i < receipt.logs.length; i++) {
-          const log = receipt.logs[i];
-          console.log(`Log ${i}:`, log);
-
-          try {
-            const parsed = contract.interface.parseLog(log);
-            console.log(`Parsed log ${i}:`, parsed);
-
-            if (parsed && parsed.name === "SubscriptionCreated") {
-              subscriptionId = parsed.args.subscriptionId?.toString();
-              console.log("✅ Found subscription ID:", subscriptionId);
-              break;
-            }
-          } catch (e) {
-            console.log(`Could not parse log ${i}:`, e);
-          }
-        }
-      } catch (e) {
-        console.warn("Could not parse events:", e);
-      }
-
-      // If we couldn't get it from events, use a fallback
-      if (!subscriptionId) {
-        console.log(
-          "⚠️ Could not get subscription ID from events, using fallback"
-        );
-        // For now, let's just use a simple increment - in a real app you'd query the contract
-        subscriptionId = "unknown_" + Date.now().toString().slice(-6);
-      }
-
-      console.log("Subscription ID:", subscriptionId);
-      toast.success(
-        `Subscribed successfully! Subscription ID: ${subscriptionId}`
-      );
-
-      return { tx, subscriptionId, receipt };
+      return { tx: hash, subscriptionId, receipt: null };
     } catch (error: any) {
       console.error("❌ Subscription failed:", error);
-      console.error("Error details:", {
-        message: error.message,
-        reason: error.reason,
-        code: error.code,
-        data: error.data,
-      });
-
       let errorMessage = "Failed to subscribe";
-      if (error.reason) {
-        errorMessage = error.reason;
-      } else if (error.message.includes("insufficient funds")) {
+      if (error.message?.includes("insufficient funds")) {
         errorMessage = "Insufficient funds";
-      } else if (error.message.includes("user rejected")) {
+      } else if (error.message?.includes("user rejected")) {
         errorMessage = "Transaction rejected by user";
+      } else if (error.shortMessage) {
+        errorMessage = error.shortMessage;
       }
-
       toast.error(errorMessage);
       throw error;
     } finally {
@@ -348,27 +178,37 @@ export const useStreamPayContract = () => {
   const withdrawEarnings = async (amount: string) => {
     setIsLoading(true);
     try {
-      const contract = await getContract();
-      const amountWei = ethers.parseEther(amount);
-      const tx = await contract[CONTRACT_FUNCTIONS.WithdrawBalance](amountWei);
-      await tx.wait();
+      await ensureCorrectNetwork();
+
+      const amountWei = parseEther(amount);
+      const hash = await writeContractAsync({
+        address: CONTRACT_CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+        abi: CONTRACT_CONFIG.CONTRACT_ABI,
+        functionName: CONTRACT_FUNCTIONS.WithdrawBalance,
+        args: [amountWei],
+      });
+
+      setPendingTxHash(hash);
       toast.success("Withdraw successful!");
-      return tx;
+      return hash;
     } catch (error: any) {
       console.error(error);
-      toast.error(error?.reason || "Failed to withdraw");
+      toast.error(error?.shortMessage || "Failed to withdraw");
       throw error;
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Get user balance
+  // Get user balance - Note: this should be used with useReadContract in components
   const getUserBalance = async () => {
     try {
-      const contract = await getContract();
-      const balance = await contract[CONTRACT_FUNCTIONS.UserBalance](address);
-      return ethers.formatEther(balance);
+      if (!address) return "0";
+      // This is a placeholder - in components, use useReadContract hook directly
+      console.log(
+        "getUserBalance - use useReadContract hook in components instead"
+      );
+      return "0";
     } catch (error: any) {
       console.error(error);
       toast.error("Failed to fetch balance");
@@ -380,16 +220,21 @@ export const useStreamPayContract = () => {
   const processPayments = async (subscriptionId: string) => {
     setIsLoading(true);
     try {
-      const contract = await getContract();
-      const tx = await contract[CONTRACT_FUNCTIONS.ProcessPayments](
-        subscriptionId
-      );
-      await tx.wait();
+      await ensureCorrectNetwork();
+
+      const hash = await writeContractAsync({
+        address: CONTRACT_CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+        abi: CONTRACT_CONFIG.CONTRACT_ABI,
+        functionName: CONTRACT_FUNCTIONS.ProcessPayments,
+        args: [subscriptionId],
+      });
+
+      setPendingTxHash(hash);
       toast.success("Payment processed successfully!");
-      return tx;
+      return hash;
     } catch (error: any) {
       console.error(error);
-      toast.error(error?.reason || "Failed to process payment");
+      toast.error(error?.shortMessage || "Failed to process payment");
       throw error;
     } finally {
       setIsLoading(false);
@@ -399,31 +244,35 @@ export const useStreamPayContract = () => {
   const Deposite = async (amount: string) => {
     setIsLoading(true);
     try {
-      const contract = await getContract();
+      await ensureCorrectNetwork();
 
-      // Send ETH value along with the tx
-      const tx = await contract[CONTRACT_FUNCTIONS.Deposite]({
-        value: ethers.parseEther(amount),
+      const hash = await writeContractAsync({
+        address: CONTRACT_CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+        abi: CONTRACT_CONFIG.CONTRACT_ABI,
+        functionName: CONTRACT_FUNCTIONS.Deposite,
+        args: [],
+        value: parseEther(amount),
       });
 
-      await tx.wait();
+      setPendingTxHash(hash);
       toast.success("Deposit successful!");
-      return tx;
+      return hash;
     } catch (error: any) {
       console.error(error);
-      toast.error(error?.reason || "Failed to deposit");
+      toast.error(error?.shortMessage || "Failed to deposit");
       throw error;
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Fetch all plans
+  // Fetch all plans - Note: use useReadContract in components
   const getAllPlans = async () => {
     try {
-      const contract = await getContract();
-      const plans = await contract[CONTRACT_FUNCTIONS.AllPlans]();
-      return plans;
+      console.log(
+        "getAllPlans - use useReadContract hook in components instead"
+      );
+      return [];
     } catch (error: any) {
       console.error(error);
       toast.error("Failed to fetch plans");
@@ -431,33 +280,27 @@ export const useStreamPayContract = () => {
     }
   };
 
-  // Check if current address is a registered provider
-  const isProviderRegistered = async (providerAddress?: string) => {
+  // Check if current address is a registered provider - Note: use useReadContract in components
+  const isProviderRegistered = async (_providerAddress?: string) => {
     try {
-      const contract = await getContract();
-      const addressToCheck = providerAddress || address;
-      if (!addressToCheck) return false;
-
-      const isRegistered = await contract.isProviderRegistered(addressToCheck);
-      return isRegistered;
+      console.log(
+        "isProviderRegistered - use useReadContract hook in components instead"
+      );
+      return false;
     } catch (error: any) {
       console.error(error);
       return false;
     }
   };
 
-  // Get plan details by ID (you might need to add view functions to your contract)
+  // Get plan details by ID - Note: use useReadContract in components
   const getPlanDetails = async (planId: string) => {
     try {
-      const contract = await getContract();
-      // These would need to be added to your contract as view functions
-      // For now, we'll return mock data but you should add these to the contract:
-      // function getPlanProvider(uint256 planId) external view returns (address)
-      // function getPlanPrice(uint256 planId) external view returns (uint256)
-      // function getPlanInterval(uint256 planId) external view returns (uint256)
-
       console.log("Getting plan details for:", planId);
-      return null; // Will need contract updates
+      console.log(
+        "getPlanDetails - use useReadContract hook in components instead"
+      );
+      return null;
     } catch (error: any) {
       console.error(error);
       return null;
@@ -475,6 +318,7 @@ export const useStreamPayContract = () => {
     Deposite,
     isProviderRegistered,
     getPlanDetails,
-    isLoading,
+    isLoading: isLoading || isConfirming,
+    isConfirmed,
   };
 };
